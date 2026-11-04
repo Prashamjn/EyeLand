@@ -1,0 +1,31 @@
+{
+  "name": "eyeland",
+  "version": "2.0.0",
+  "description": "A Dynamic Island for Windows with eyes that follow your cursor, and 20 built-in tools",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "tesseract.js": "^5.1.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.eyeland.app",
+    "productName": "Eyeland",
+    "asarUnpack": [
+      "native/**",
+      "node_modules/ffmpeg-static/**",
+      "node_modules/tesseract.js/**",
+      "node_modules/tesseract.js-core/**"
+    ],
+    "files": ["main.js", "preload.js", "src/**", "shared/**", "renderer/**", "hub/**", "overlay/**", "native/**", "assets/**"],
+    "win": { "target": "nsis", "icon": "assets/icon.ico" },
+    "nsis": { "oneClick": true, "perMachine": false }
+  }
+}

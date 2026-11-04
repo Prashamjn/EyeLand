@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'">
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+  <!-- region select (text, lens, translate) -->
+  <div id="select" hidden>
+    <img id="shot" alt="">
+    <div id="dim"></div>
+    <div id="sel"></div>
+    <div id="hint" class="glass"></div>
+  </div>
+
+  <!-- color picker -->
+  <div id="color" hidden>
+    <canvas id="px"></canvas>
+    <div id="loupe" class="glass"><canvas id="lp" width="135" height="135"></canvas><div id="lpLabel"><i id="lpSwatch"></i><span id="lpText"></span></div></div>
+    <div id="chint" class="glass">Click to copy the color. Arrow keys move one pixel. Esc cancels.</div>
+  </div>
+
+  <!-- draw -->
+  <div id="draw" hidden>
+    <canvas id="cv"></canvas>
+    <div id="pen"></div>
+    <div id="bar" class="glass">
+      <div class="grp" id="sizes">
+        <button data-size="2" title="Thin"><i style="height:2px"></i></button>
+        <button data-size="5" title="Medium" class="on"><i style="height:5px"></i></button>
+        <button data-size="12" title="Thick"><i style="height:10px"></i></button>
+      </div>
+      <div class="sep"></div>
+      <div class="grp" id="colors"></div>
+      <label class="custom" title="Custom color"><input id="custom" type="color" value="#ffffff"></label>
+      <div class="sep"></div>
+      <div class="grp">
+        <button id="tPen" class="on" title="Pen">Pen</button>
+        <button id="tMark" title="Highlighter">Marker</button>
+        <button id="tEraser" title="Eraser">Eraser</button>
+      </div>
+      <div class="sep"></div>
+      <div class="grp">
+        <button id="bUndo" title="Undo (Ctrl+Z)">Undo</button>
+        <button id="bClear" title="Clear all">Clear</button>
+        <button id="bClose" title="Close (Esc)">Done</button>
+      </div>
+    </div>
+  </div>
+<script src="overlay.js"></script>
+</body>
+</html>
