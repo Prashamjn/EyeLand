@@ -12,7 +12,21 @@ $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,
 $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType = WindowsRuntime]
 $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
 
-$last = ''
+# Album artwork: sent once per track as its own line {"art": base64, "key": "title|artist|app"}.
+# Isolated in try/catch so a failure here can never break the title/artist/playing feed.
+function Get-Art($p) {
+  try {
+    $ref = $p.Thumbnail; if (-not $ref) { return '' }
+    $stream = Await ($ref.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
+    if (-not $stream -or $stream.Size -le 0 -or $stream.Size -gt 3145728) { return '' }
+    $net = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($stream)
+    $ms = New-Object System.IO.MemoryStream
+    $net.CopyTo($ms)
+    return [Convert]::ToBase64String($ms.ToArray())
+  } catch { return '' }
+}
+
+$last = ''; $artKey = ''; $artTries = 0
 while ($true) {
   $obj = @{ title = ''; artist = ''; app = ''; playing = $false }
   $s = $mgr.GetCurrentSession()
@@ -24,5 +38,11 @@ while ($true) {
   }
   $json = $obj | ConvertTo-Json -Compress
   if ($json -ne $last) { $last = $json; [Console]::Out.WriteLine($json); [Console]::Out.Flush() }
+  $key = '{0}|{1}|{2}' -f $obj.title, $obj.artist, $obj.app
+  if ($s -and $obj.title -and $key -ne $artKey) {
+    $art = Get-Art $p
+    if ($art) { [Console]::Out.WriteLine((@{ art = $art; key = $key } | ConvertTo-Json -Compress)); [Console]::Out.Flush(); $artKey = $key; $artTries = 0 }
+    elseif (++$artTries -ge 3) { $artKey = $key; $artTries = 0 }   # no artwork for this track, stop asking
+  }
   Start-Sleep -Milliseconds 1000
 }

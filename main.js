@@ -11,6 +11,8 @@ const net = require('./src/net');
 const yt = require('./src/youtube');
 const cleaner = require('./src/cleaner');
 const sysinfo = require('./src/sysinfo');
+const { createWeather, searchPlaces, nameForCoords, TTL_MS: WEATHER_TTL } = require('./src/weather');
+const { getDeviceLocation } = require('./src/location');
 const speed = require('./src/speedtest');
 const voice = require('./src/voice');
 const { createShare } = require('./src/share');
@@ -18,13 +20,14 @@ const { uniquePath } = require('./src/util');
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
-const W = 560, H = 300;
+// Transparent, click-through host window. The island and its header are drawn inside it.
+const W = 640, H = 460;
 const nativeDir = path.join(__dirname, 'native').replace('app.asar', 'app.asar.unpacked');
 const PS = (file, args) => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(nativeDir, file), ...args];
 
 const defaultShortcuts = Object.fromEntries(CATALOG.map((p) => [p.id, p.key]));
 const defaults = {
-  position: 'top', offsetY: 0, eyeColor: '#b8ffa3', animSpeed: 1, theme: 'black',
+  position: 'top', offsetY: 0, animSpeed: 1, theme: 'black', display: 'primary', showHeader: true, locationMode: 'unset',
   hoverDelay: 120, overlayMs: 1800, autostart: false, clipboardHistory: false,
   focusMin: 25, breakMin: 5, notes: '', showBattery: true,
   hideInFullscreen: true, shortcuts: defaultShortcuts, coffeeMinutes: 0,
@@ -55,11 +58,20 @@ function saveSettings(partial, except) {
 }
 
 /* ---------- island window ---------- */
+// The chosen display (settings.display = 'primary' or a display id). Falls back to the primary display
+// when the chosen one is unplugged. Electron reports DIPs, so display scaling needs no extra maths.
+function targetDisplay() {
+  const want = settings.display;
+  if (want && want !== 'primary') { const d = screen.getAllDisplays().find((x) => String(x.id) === String(want)); if (d) return d; }
+  return screen.getPrimaryDisplay();
+}
 function place() {
-  const b = screen.getPrimaryDisplay().bounds;
-  const x = Math.round(b.x + (b.width - W) / 2);
-  const y = settings.position === 'bottom' ? b.y + b.height - H : b.y;
-  win.setBounds({ x, y, width: W, height: H });
+  if (!win || win.isDestroyed()) return;
+  const b = targetDisplay().bounds;
+  const w = Math.min(W, b.width), h = Math.min(H, b.height);
+  const x = Math.round(b.x + (b.width - w) / 2);
+  const y = settings.position === 'bottom' ? b.y + b.height - h : b.y;
+  win.setBounds({ x, y, width: w, height: h });
 }
 
 function createWindow() {
@@ -130,15 +142,20 @@ function openHub(id) {
 const showHub = openHub;
 
 /* ---------- cursor tracking ---------- */
-let lastPt = { x: -1, y: -1 };
-setInterval(() => {
+// The window is click-through, so the main process reports the cursor for hover detection.
+// It only does work while the cursor is near the window, and sends one "left" event on exit.
+let lastPt = { x: -1, y: -1 }, cursorNear = false;
+const cursorTimer = setInterval(() => {
   if (!win || win.isDestroyed() || !win.isVisible()) return;
   const p = screen.getCursorScreenPoint();
   if (p.x === lastPt.x && p.y === lastPt.y) return;
   lastPt = p;
-  const b = win.getBounds();
+  const b = win.getBounds(), m = 48;
+  const near = p.x >= b.x - m && p.x <= b.x + b.width + m && p.y >= b.y - m && p.y <= b.y + b.height + m;
+  if (!near) { if (cursorNear) { cursorNear = false; send('cursor', { x: -9999, y: -9999 }); } return; }
+  cursorNear = true;
   send('cursor', { x: p.x - b.x, y: p.y - b.y });
-}, 16);
+}, 33);
 
 /* ---------- native helpers ---------- */
 function lineReader(proc, onLine) {
@@ -242,6 +259,52 @@ ipcMain.handle('ey:shortcut-set', (_e, id, key) => {
 });
 ipcMain.handle('ey:shortcut-errors', () => registerAll());
 
+/* ---------- weather + location (island header) ---------- */
+const weatherCacheFile = () => path.join(app.getPath('userData'), 'weather-cache.json');
+const weatherSvc = createWeather({
+  fetchJSON: net.fetchJSON,
+  readCache: () => JSON.parse(fs.readFileSync(weatherCacheFile(), 'utf8')),
+  writeCache: (o) => fs.writeFileSync(weatherCacheFile(), JSON.stringify(o)),
+});
+let lastWeather = null, weatherTimer = null;
+async function pushWeather(force = false) {
+  const place = settings.weatherPlace;
+  lastWeather = place ? await weatherSvc.get({ place, unit: settings.tempUnit === 'f' ? 'f' : 'c', force }) : { ok: false, error: 'no-place' };
+  send('ey:weather', lastWeather);
+  return lastWeather;
+}
+function scheduleWeather() {
+  clearTimeout(weatherTimer);
+  const ok = lastWeather && lastWeather.ok && !lastWeather.stale;
+  weatherTimer = setTimeout(async () => { await pushWeather(true); scheduleWeather(); }, ok ? WEATHER_TTL : 2 * 60 * 1000);   // retry sooner after a failure
+}
+const validPlace = (p) => p && typeof p.name === 'string' && Number.isFinite(+p.lat) && Number.isFinite(+p.lon) && Math.abs(+p.lat) <= 90 && Math.abs(+p.lon) <= 180;
+ipcMain.handle('ey:env', () => ({ locale: app.getSystemLocale() || app.getLocale() }));   // Windows regional format, not just UI language
+ipcMain.handle('ey:displays', () => screen.getAllDisplays().map((d, i) => ({ id: String(d.id), label: `Display ${i + 1}${d.id === screen.getPrimaryDisplay().id ? ' (primary)' : ''}  ${d.size.width}x${d.size.height}` })));
+ipcMain.handle('ey:weather:get', async () => (lastWeather || (await pushWeather(false))));
+ipcMain.handle('ey:weather:refresh', async () => { const r = await pushWeather(true); scheduleWeather(); return r; });
+ipcMain.handle('ey:place:search', async (_e, q) => { try { return { ok: true, results: await searchPlaces(net.fetchJSON, q) }; } catch { return { ok: false, results: [] }; } });
+ipcMain.handle('ey:place:set', async (_e, place) => {
+  if (place === null) { saveSettings({ weatherPlace: null, locationMode: 'unset' }); await pushWeather(true); return { ok: true }; }
+  if (!validPlace(place)) return { ok: false };
+  saveSettings({ weatherPlace: { name: place.name.slice(0, 100), lat: +place.lat, lon: +place.lon }, locationMode: 'manual' });
+  const r = await pushWeather(true); scheduleWeather(); return { ok: true, weather: r };
+});
+let locating = false;
+ipcMain.handle('ey:location:device', async () => {
+  if (locating) return { ok: false, error: 'busy' };
+  locating = true;
+  try {
+    const r = await getDeviceLocation(PS('location.ps1', []));
+    if (!r.ok) return r;
+    const name = await nameForCoords(net.fetchJSON, r.lat, r.lon);
+    saveSettings({ weatherPlace: { name, lat: r.lat, lon: r.lon }, locationMode: 'device' });
+    const w = await pushWeather(true); scheduleWeather();
+    return { ok: true, place: settings.weatherPlace, weather: w };
+  } finally { locating = false; }
+});
+ipcMain.handle('ey:location:open-privacy', () => shell.openExternal('ms-settings:privacy-location'));
+
 /* ---------- generic IPC ---------- */
 ipcMain.handle('settings-get', () => settings);
 ipcMain.on('settings-save', (e, s) => {
@@ -251,6 +314,7 @@ ipcMain.on('settings-save', (e, s) => {
   app.setLoginItemSettings({ openAtLogin: !!settings.autostart });
   if (!settings.clipboardHistory) { clips = []; send('clips', clips); }
   if (old.hideInFullscreen !== settings.hideInFullscreen) updateIsland();
+  if (old.tempUnit !== settings.tempUnit || JSON.stringify(old.weatherPlace) !== JSON.stringify(settings.weatherPlace)) pushWeather(true).then(scheduleWeather);   // also covers changes made in the Weather plugin
 });
 ipcMain.handle('ey:catalog', () => CATALOG.map((p) => ({ ...p, key: settings.shortcuts[p.id] || '' })));
 ipcMain.handle('ey:run', (_e, id) => runPlugin(id));
@@ -375,6 +439,7 @@ function createTray() {
   tray.setToolTip('Eyeland');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open panel', click: () => send('open-panel', {}) },
+    { label: 'Settings', click: () => send('open-panel', { tab: 'settings' }) },
     { label: 'Open plugins', click: () => openHub('todo') },
     { label: 'Quit Eyeland', click: () => app.quit() },
   ]));
@@ -387,10 +452,11 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionCheckHandler((_wc, perm) => perm === 'media');
   app.setLoginItemSettings({ openAtLogin: !!settings.autostart });
   createWindow(); createTray(); startWatchers();
+  pushWeather(false).then(scheduleWeather);
   const errs = registerAll();
   if (Object.keys(errs).length) console.warn('[shortcuts] could not register:', errs);
 });
 app.on('second-instance', () => send('open-panel', {}));
 app.on('will-quit', () => globalShortcut.unregisterAll());
-app.on('before-quit', () => { app.isQuitting = true; share.stop(); procs.forEach((p) => { try { p.kill(); } catch {} }); });
+app.on('before-quit', () => { app.isQuitting = true; clearInterval(cursorTimer); clearTimeout(weatherTimer); share.stop(); procs.forEach((p) => { try { p.kill(); } catch {} }); });
 app.on('window-all-closed', () => app.quit());
