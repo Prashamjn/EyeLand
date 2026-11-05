@@ -5,6 +5,7 @@ const fs = require('fs');
 const { spawn, execFile } = require('child_process');
 
 const CATALOG = require('./shared/catalog.js');
+const { migrateSettings, needsMigration } = require('./shared/registry.js');
 const media = require('./src/media');
 const pdf = require('./src/pdf');
 const net = require('./src/net');
@@ -20,26 +21,41 @@ const { uniquePath } = require('./src/util');
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
-// Transparent, click-through host window. The island and its header are drawn inside it.
-const W = 640, H = 460;
+// Transparent, click-through host window. The island (header included) is drawn inside it.
+// 'compact' fits the normal expanded island; 'large' leaves room for the bigger plugin workspace.
+const SIZES = { compact: { w: 640, h: 470 }, large: { w: 860, h: 700 } };
+let sizeMode = 'compact';
 const nativeDir = path.join(__dirname, 'native').replace('app.asar', 'app.asar.unpacked');
 const PS = (file, args) => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(nativeDir, file), ...args];
 
 const defaultShortcuts = Object.fromEntries(CATALOG.map((p) => [p.id, p.key]));
 const defaults = {
-  position: 'top', offsetY: 0, animSpeed: 1, theme: 'black', display: 'primary', showHeader: true, locationMode: 'unset',
+  position: 'top', offsetY: 0, animSpeed: 1, theme: 'black', display: 'primary', locationMode: 'unset',
   hoverDelay: 120, overlayMs: 1800, autostart: false, clipboardHistory: false,
   focusMin: 25, breakMin: 5, notes: '', showBattery: true,
   hideInFullscreen: true, shortcuts: defaultShortcuts, coffeeMinutes: 0,
   todos: [], events: {}, colorFormat: 'hex', colorHistory: [], ocrLang: 'eng', translateTo: 'en',
   lensEngine: 'google', lensConsent: false, weatherPlace: null, tempUnit: 'c',
 };
-let settings = { ...defaults }, win, hub, tray, clips = [], lastClip = '';
+let settings = migrateSettings({ ...defaults }), win, hub, tray, clips = [], lastClip = '';
 let hubReady = false, pendingHub = null;
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 function loadSettings() {
-  try { settings = { ...defaults, ...JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) }; } catch { settings = { ...defaults }; }
+  const file = settingsFile();
+  let stored = null, raw = null;
+  try { raw = fs.readFileSync(file, 'utf8'); stored = JSON.parse(raw); }
+  catch (e) {
+    // A missing file is normal on first run. An unreadable one is kept aside, never silently overwritten.
+    if (raw !== null) { try { fs.copyFileSync(file, file.replace(/\.json$/, '.corrupt.json')); } catch {} }
+  }
+  // Settings written before the plugin registry (schema 1) are backed up once, then migrated. Nothing is dropped.
+  if (stored && needsMigration(stored)) {
+    const backup = file.replace(/\.json$/, '.v1.backup.json');
+    try { if (!fs.existsSync(backup)) fs.writeFileSync(backup, raw); } catch {}
+  }
+  settings = migrateSettings({ ...defaults, ...(stored && typeof stored === 'object' ? stored : {}) });
   settings.shortcuts = { ...defaultShortcuts, ...(settings.shortcuts || {}) };
+  if (stored && needsMigration(stored)) saveFile();
 }
 const saveFile = () => { try { fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2)); } catch {} };
 const S = () => settings;
@@ -67,8 +83,8 @@ function targetDisplay() {
 }
 function place() {
   if (!win || win.isDestroyed()) return;
-  const b = targetDisplay().bounds;
-  const w = Math.min(W, b.width), h = Math.min(H, b.height);
+  const b = targetDisplay().bounds, size = SIZES[sizeMode];
+  const w = Math.min(size.w, b.width), h = Math.min(size.h, b.height);
   const x = Math.round(b.x + (b.width - w) / 2);
   const y = settings.position === 'bottom' ? b.y + b.height - h : b.y;
   win.setBounds({ x, y, width: w, height: h });
@@ -76,7 +92,7 @@ function place() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: W, height: H, frame: false, transparent: true, resizable: false, movable: false,
+    width: SIZES.compact.w, height: SIZES.compact.h, frame: false, transparent: true, resizable: false, movable: false,
     skipTaskbar: true, alwaysOnTop: true, focusable: false, hasShadow: false, show: false,
     backgroundColor: '#00000000',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
@@ -139,7 +155,32 @@ function openHub(id) {
   if (hubReady) sendHub('hub:open', { id }); else pendingHub = id;
   hub.show(); hub.focus();
 }
-const showHub = openHub;
+
+/* ---------- plugins live inside the island ----------
+   The hub window is now only a fallback (used when the island is hidden, e.g. over a full-screen app).
+   Messages meant for a plugin that is still loading are queued until the island reports it mounted. */
+let awaitingPlugin = null, pluginQueue = [];
+function openPlugin(id) {
+  if (win && !win.isDestroyed() && win.isVisible()) {
+    awaitingPlugin = id; pluginQueue = [];
+    send('open-plugin', { id });
+  } else openHub(id);
+}
+function sendPlugin(ch, data) {
+  if (hub && !hub.isDestroyed() && hub.isVisible()) return sendHub(ch, data);
+  if (awaitingPlugin) { pluginQueue.push([ch, data]); setTimeout(() => { pluginQueue = pluginQueue.filter((m) => m[1] !== data); }, 8000); return; }
+  send(ch, data);
+}
+ipcMain.on('ey:plugin-mounted', () => {
+  awaitingPlugin = null;
+  const q = pluginQueue; pluginQueue = [];
+  q.forEach(([ch, d]) => send(ch, d));
+});
+ipcMain.on('island-size', (_e, mode) => {                              // validated: only the two known modes
+  if (mode !== 'compact' && mode !== 'large') return;
+  if (mode !== sizeMode) { sizeMode = mode; place(); }
+});
+const showHub = openPlugin;
 
 /* ---------- cursor tracking ---------- */
 // The window is click-through, so the main process reports the cursor for hover detection.
@@ -218,7 +259,7 @@ function setCoffee(on) {
 }
 
 /* ---------- screen plugins ---------- */
-const capture = require('./src/capture')({ settings: S, saveSettings: (p) => saveSettings(p), toast, hideForCapture, showHub, sendHub });
+const capture = require('./src/capture')({ settings: S, saveSettings: (p) => saveSettings(p), toast, hideForCapture, showHub, sendHub: sendPlugin });
 capture.register(ipcMain);
 
 function runPlugin(id) {
@@ -228,7 +269,7 @@ function runPlugin(id) {
     case 'colorPicker': return capture.start('color');
     case 'draw': return capture.start('draw');
     case 'coffee': return setCoffee(coffeeId === null);
-    default: return openHub(id);
+    default: return openPlugin(id);
   }
 }
 const shortcutRun = (id) => (id === 'translate' ? capture.start('translate') : runPlugin(id));
@@ -318,7 +359,7 @@ ipcMain.on('settings-save', (e, s) => {
 });
 ipcMain.handle('ey:catalog', () => CATALOG.map((p) => ({ ...p, key: settings.shortcuts[p.id] || '' })));
 ipcMain.handle('ey:run', (_e, id) => runPlugin(id));
-ipcMain.handle('ey:open-hub', (_e, id) => openHub(id || 'todo'));
+ipcMain.handle('ey:open-hub', (_e, id) => openPlugin(id || 'todo'));
 ipcMain.handle('ey:coffee', () => coffeeId !== null);
 ipcMain.handle('ey:fetch-json', (_e, url) => net.fetchJSON(url));
 ipcMain.handle('ey:ip-location', () => net.ipLocation());
@@ -427,7 +468,7 @@ ipcMain.handle('ey:sys:disks', () => sysinfo.disks());
 ipcMain.handle('ey:speed:run', (e) => speed.run((d) => e.sender.send('ey:speed', d)));
 ipcMain.handle('ey:speed:cancel', () => speed.cancel());
 
-const share = createShare((snap) => sendHub('ey:share:update', snap));
+const share = createShare((snap) => sendPlugin('ey:share:update', snap));
 ipcMain.handle('ey:share:ips', () => share.lanIps());
 ipcMain.handle('ey:share:start', (_e, { mode, files, ip }) => share.start({ mode, files, ip, dir: path.join(app.getPath('downloads'), 'Eyeland Received') }));
 ipcMain.handle('ey:share:stop', () => share.stop());
@@ -440,7 +481,8 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open panel', click: () => send('open-panel', {}) },
     { label: 'Settings', click: () => send('open-panel', { tab: 'settings' }) },
-    { label: 'Open plugins', click: () => openHub('todo') },
+    { label: 'Open plugins', click: () => send('open-panel', { tab: 'apps' }) },
+    { label: 'Plugin window (legacy)', click: () => openHub('todo') },
     { label: 'Quit Eyeland', click: () => app.quit() },
   ]));
   tray.on('click', () => send('open-panel', {}));

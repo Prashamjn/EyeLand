@@ -34,7 +34,7 @@ const ctx = {
   icon: (id) => h('span', { html: ICONS.svg(id), style: 'display:inline-flex' }),
   save(partial) { Object.assign(ctx.S, partial); ey.send('settings-save', partial); },
   toast(msg, err) {
-    const t = document.getElementById('toast');
+    const t = ctx.toastEl || document.getElementById('toast');
     t.textContent = msg; t.className = 'on' + (err ? ' err' : '');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), err ? 4200 : 2200);
   },
@@ -60,7 +60,7 @@ function webUtils_path(file) { return (window.eyeland.pathFor && window.eyeland.
 // PDF helpers (pdf.js is vendored, so everything works offline)
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 const b64ToBytes = (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
-ctx.loadPdf = async (b64) => pdfjsLib.getDocument({ data: b64ToBytes(b64), isEvalSupported: false }).promise;
+ctx.loadPdf = async (b64) => (window.EY_VENDOR && (pdfjsLib.GlobalWorkerOptions.workerSrc = window.EY_VENDOR + 'pdf.worker.min.js'), pdfjsLib.getDocument({ data: b64ToBytes(b64), isEvalSupported: false }).promise);
 ctx.renderPage = async (doc, n, scale, type = 'image/jpeg', q = 0.9) => {
   const page = await doc.getPage(n), vp = page.getViewport({ scale });
   const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);

@@ -2,21 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; connect-src 'self' blob: data:">
 <title>EyeLand</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body data-theme="black">
 <div id="stage">
-
-  <!-- Persistent info header: weather · time · date -->
-  <div id="bar" class="bar">
-    <button id="barWeather" class="bar-l" type="button" aria-label="Weather and location">
-      <span id="wxIcon" class="bar-ico"></span><b id="wxTemp" class="mono"></b><span id="wxCity" class="bar-city"></span>
-    </button>
-    <time id="barClock" class="bar-c mono"></time>
-    <div class="bar-r"><span id="barDate"></span><span id="barCond" class="bar-cond"></span></div>
-  </div>
 
   <!-- The island: one shape that morphs between idle, activity and expanded -->
   <div id="island" data-mode="idle">
@@ -25,6 +16,15 @@
     <div class="layer l-activity"><div id="actSlot" class="slot"></div></div>
 
     <div class="layer l-panel">
+      <!-- HEADER: weather · time · date. Part of the expanded island, so it stays while a plugin is open. -->
+      <header id="head" class="head" aria-label="Weather, time and date">
+        <button id="barWeather" class="head-l" type="button" aria-label="Weather and location">
+          <span id="wxIcon" class="head-ico"></span><b id="wxTemp" class="mono"></b><span id="wxCity" class="head-city"></span>
+        </button>
+        <time id="barClock" class="head-c mono"></time>
+        <div class="head-r"><span id="barDate"></span><span id="barCond" class="head-cond"></span><button id="headClose" class="head-x" type="button" aria-label="Collapse island" title="Collapse (Esc)"></button></div>
+      </header>
+
       <!-- TOP: dynamic activity section (music, lyrics, downloads, conversions, QuickShare, timers...) -->
       <section id="topSection" class="top" aria-label="Activity">
         <div id="topSlot" class="slot"></div>
@@ -45,10 +45,11 @@
         <main class="content">
           <section class="tab" data-tab="home">
             <div class="home">
-              <div class="search" aria-disabled="true" title="Plugin search is coming soon"><span class="search-ico"></span><span>Search plugins</span></div>
+              <div class="search"><span class="search-ico"></span><input id="pluginSearch" type="text" role="combobox" aria-label="Search plugins" aria-expanded="false" aria-controls="searchResults" aria-autocomplete="list" placeholder="Search plugins" autocomplete="off" spellcheck="false" maxlength="60"></div>
+              <div id="searchResults" class="results" role="listbox" aria-label="Plugin results" hidden></div>
               <div class="home-grid">
                 <div class="card">
-                  <span class="label">Quick access</span>
+                  <span class="label">Favourites</span>
                   <div id="quickGrid" class="quick"></div>
                 </div>
                 <div class="card">
@@ -72,6 +73,17 @@
           </section>
 
           <section class="tab" data-tab="apps"><div id="appsGrid" class="apps"></div></section>
+
+          <section class="tab" data-tab="plugin">
+            <div class="pbar">
+              <button id="pBack" class="pbtn" type="button" aria-label="Back" title="Back (Esc)"></button>
+              <span id="pIcon" class="pico"></span><span id="pTitle" class="ptitle"></span>
+              <span class="pspacer"></span>
+              <button id="pFav" class="pbtn" type="button" aria-label="Favourite" title="Add to favourites"></button>
+              <button id="pHome" class="pbtn" type="button" aria-label="Home" title="Home"></button>
+            </div>
+            <div id="pluginMount" class="pmount"></div>
+          </section>
 
           <section class="tab" data-tab="timer">
             <div class="timer card">
@@ -121,10 +133,12 @@
 <script src="../shared/lucide.js"></script>
 <script src="../shared/weather-codes.js"></script>
 <script src="../shared/icons.js"></script>
+<script src="../shared/registry.js"></script>
 <script src="js/core.js"></script>
 <script src="js/views.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/header.js"></script>
+<script src="js/plugin-host.js"></script>
 <script src="js/feeds.js"></script>
 <script src="js/workspace.js"></script>
 <script src="renderer.js"></script>

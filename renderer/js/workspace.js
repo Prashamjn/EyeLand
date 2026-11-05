@@ -1,6 +1,6 @@
-// Expanded workspace (bottom half): navigation rail + sections.
-// Existing features are kept (system sliders, timer, tasks, clipboard, plugin grid, settings).
-// Favourites, plugin search and plugin navigation are visual placeholders for the next phase.
+// Expanded workspace (bottom half): navigation rail + sections + the in-island plugin view.
+// Plugins come from the central registry (shared/registry.js): favourites, recents, search and navigation.
+// A plugin opens in the 'plugin' view and is hosted by PluginHost, never in a separate window.
 (function () {
   const { $, $$, S, manager, icon, setText, later, cancel, own } = Island;
   const api = window.api, P = ActivityManager.PRIORITY;
@@ -11,17 +11,26 @@
   const NAV = { home: 'house', apps: 'layout-grid', timer: 'timer', tasks: 'list-checks', clips: 'clipboard', settings: 'sliders' };
   $$('#nav button').forEach((b) => { b.innerHTML = icon(NAV[b.dataset.tab], 18); b.addEventListener('click', () => showTab(b.dataset.tab)); });
   $('.search-ico').innerHTML = icon('search', 14);
-  function showTab(t) {
-    if (!NAV[t]) t = 'home';
+  const reg = () => Island.registry;
+  let returnTab = 'home';
+  function paintTab(t) {                                    // DOM only
     activeTab = t;
-    $$('.tab').forEach((s) => s.classList.toggle('on', s.dataset.tab === t));
-    $$('#nav button').forEach((b) => { b.classList.toggle('on', b.dataset.tab === t); b.setAttribute('aria-current', b.dataset.tab === t ? 'page' : 'false'); });
+    const railTab = t === 'plugin' ? 'apps' : t;
+    $$('.tab').forEach((x) => x.classList.toggle('on', x.dataset.tab === t));
+    $$('#nav button').forEach((x) => { const on = x.dataset.tab === railTab; x.classList.toggle('on', on); x.setAttribute('aria-current', on ? 'page' : 'false'); });
+    if (t === 'tasks') paintTasks();
+    if (t === 'home') renderQuick();
+  }
+  function showTab(t) {
+    if (t !== 'plugin' && activeTab === 'plugin') leavePlugin();
+    if (t !== 'plugin' && !NAV[t]) t = 'home';
+    paintTab(t);
   }
 
   // The island window is not focusable by default; allow typing only while a text box is in use.
   function typable(input) {
     input.addEventListener('mousedown', () => { api.setFocusable(true); later(() => input.focus(), 60); });
-    input.addEventListener('blur', () => { api.setFocusable(false); if (!Engine.isInside()) Engine.scheduleClose(); });
+    input.addEventListener('blur', () => { if (!Engine.isPinned()) api.setFocusable(false); if (!Engine.isInside()) Engine.scheduleClose(); });
   }
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
@@ -136,23 +145,155 @@
   taskInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addTask(); });
   typable(taskInput);
 
-  /* ---------- plugins grid + quick access ---------- */
-  const QUICK = ['textExtract', 'colorPicker', 'todo', 'coffee'];
-  async function loadApps() {
-    let cat; try { cat = await api.catalog(); } catch { return; }
-    const grid = $('#appsGrid'); grid.innerHTML = '';
-    const mk = (p, withLabel) => {
-      const b = document.createElement('button'); b.className = withLabel ? 'app' + (p.id === 'coffee' && coffeeOn ? ' on' : '') : ''; b.dataset.id = p.id;
-      b.title = p.name + (p.key ? '  (' + p.key + ')' : ''); b.setAttribute('aria-label', p.name);
-      b.innerHTML = ICONS.svg(p.id) + (withLabel ? '<span>' + p.name + '</span>' : '');
-      b.addEventListener('click', () => { api.run(p.id); if (p.id !== 'coffee') Engine.closePanel(); });
-      return b;
-    };
-    cat.filter((p) => p.id !== 'shortcuts').forEach((p) => grid.appendChild(mk(p, true)));
+  /* ---------- plugins: favourites, grid, search, in-island view ---------- */
+  const tile = (p, withLabel) => {
+    const b = document.createElement('button');
+    b.className = withLabel ? 'app' + (p.id === 'coffee' && coffeeOn ? ' on' : '') + (reg().isFavourite(p.id) ? ' fav' : '') : '';
+    b.dataset.id = p.id; b.type = 'button';
+    b.title = p.name + (p.key ? '  (' + p.key + ')' : '') + (withLabel ? '\nRight-click to ' + (reg().isFavourite(p.id) ? 'remove from' : 'add to') + ' favourites' : '');
+    b.setAttribute('aria-label', p.name);
+    b.innerHTML = ICONS.svg(p.id) + (withLabel ? '<span>' + p.name + '</span>' : '');
+    b.addEventListener('click', () => launch(p.id, !withLabel));
+    if (withLabel) b.addEventListener('contextmenu', (e) => { e.preventDefault(); reg().toggleFavourite(p.id); });
+    return b;
+  };
+  function renderQuick() {
+    if (!reg()) return;
     const q = $('#quickGrid'); q.innerHTML = '';
-    QUICK.map((id) => cat.find((p) => p.id === id)).filter(Boolean).forEach((p) => q.appendChild(mk(p, false)));
+    const favs = reg().favourites().filter((p) => !p.hidden).slice(0, 8);
+    favs.forEach((p) => q.appendChild(tile(p, false)));
+    if (!favs.length) { const e = document.createElement('div'); e.className = 'quick-empty'; e.textContent = 'Open a plugin and tap the star to pin it here.'; q.appendChild(e); }
+    q.classList.toggle('empty-state', !favs.length);
+  }
+  function renderApps() {
+    if (!reg()) return;
+    const grid = $('#appsGrid'); grid.innerHTML = '';
+    const section = (label, list) => {
+      if (!list.length) return;
+      const l = document.createElement('div'); l.className = 'grp'; l.textContent = label; grid.appendChild(l);
+      list.forEach((p) => grid.appendChild(tile(p, true)));
+    };
+    section('Recent', reg().recents().filter((p) => !p.hidden).slice(0, 5));
+    reg().categories().forEach((c) => section(c, reg().list({ category: c })));
+  }
+  // Quick access runs instant plugins (screen tools, coffee mode) directly; everything else opens in the workspace.
+  function launch(id, quick) {
+    const p = reg() && reg().get(id); if (!p) return;
+    if (quick && (p.kind === 'action' || p.kind === 'toggle')) {
+      reg().markUsed(id); api.run(id);
+      if (p.kind === 'action') Engine.closePanel();
+      return;
+    }
+    openPlugin(id);
   }
   function setCoffee(on) { coffeeOn = on; const t = document.querySelector('.app[data-id="coffee"]'); if (t) t.classList.toggle('on', on); }
+
+  /* ---- plugin view: open, back, home ---- */
+  const bar = { icon: $('#pIcon'), title: $('#pTitle'), fav: $('#pFav'), back: $('#pBack'), home: $('#pHome') };
+  bar.back.innerHTML = icon('arrow-left', 16); bar.home.innerHTML = icon('house', 15); bar.fav.innerHTML = icon('star', 15);
+  $('#headClose').innerHTML = icon('chevron-up', 14);
+  $('#headClose').addEventListener('click', () => Engine.closePanel());
+  function paintPluginBar() {
+    const p = reg() && reg().get(reg().current()); if (!p) return;
+    bar.icon.innerHTML = ICONS.svg(p.id); setText(bar.title, p.name);
+    const f = reg().isFavourite(p.id);
+    bar.fav.classList.toggle('on', f); bar.fav.setAttribute('aria-pressed', String(f)); bar.fav.title = f ? 'Remove from favourites' : 'Add to favourites';
+  }
+  bar.back.addEventListener('click', () => back());
+  bar.home.addEventListener('click', () => goHome());
+  bar.fav.addEventListener('click', () => { const id = reg().current(); if (id) reg().toggleFavourite(id); });
+
+  // Shows the registry's current plugin: resize the workspace, keep the island open, mount the page.
+  async function present(p) {
+    paintTab('plugin'); paintPluginBar();
+    Engine.setSizeMode(p.size === 'compact' ? 'compact' : 'large');
+    Engine.pin(true);
+    if (!Engine.isExpanded()) Engine.openPanel();
+    try { await PluginHost.mount(p, { onBack: back }); } finally { api.pluginMounted(); }
+  }
+  async function openPlugin(id) {
+    if (!reg()) return;
+    let p;
+    try { p = reg().open(id); }
+    catch (e) { manager.post({ id: 'plugin-error', type: 'notice', icon: 'triangle-alert', title: e.message, priority: P.NOTICE, expiresIn: 3200, data: { tone: 'warn' } }); api.pluginMounted(); return; }
+    if (activeTab !== 'plugin') returnTab = NAV[activeTab] ? activeTab : 'home';
+    clearSearch();
+    await present(p);
+  }
+  function leavePlugin(to) {
+    PluginHost.unmount(); reg().home();
+    Engine.pin(false); Engine.setSizeMode('compact');
+    if (to) paintTab(to);
+  }
+  function back() {
+    if (activeTab !== 'plugin') return;
+    const prev = reg().back();
+    if (prev) present(prev); else leavePlugin(returnTab);
+  }
+  function goHome() { if (activeTab === 'plugin') leavePlugin('home'); else showTab('home'); }
+
+  /* ---- search: names, descriptions, categories and keywords; arrows + Enter + Esc ---- */
+  const sIn = $('#pluginSearch'), sBox = $('#searchResults'), homeEl = $('.home');
+  let results = [], sel = 0;
+  typable(sIn);
+  function paintSel() {
+    [...sBox.children].forEach((c, i) => { const on = i === sel; c.classList.toggle('on', on); c.setAttribute('aria-selected', String(on)); if (on) c.scrollIntoView({ block: 'nearest' }); });
+    const c = sBox.children[sel];
+    if (c && c.id) sIn.setAttribute('aria-activedescendant', c.id); else sIn.removeAttribute('aria-activedescendant');
+  }
+  function renderResults() {
+    const q = sIn.value.trim(), searching = q.length > 0;
+    homeEl.classList.toggle('searching', searching); sBox.hidden = !searching;
+    sBox.innerHTML = ''; results = [];
+    if (!searching) { sIn.setAttribute('aria-expanded', 'false'); sIn.removeAttribute('aria-activedescendant'); return; }
+    results = reg() ? reg().search(q, { limit: 8 }) : [];
+    sIn.setAttribute('aria-expanded', String(results.length > 0));
+    if (!results.length) {
+      const e = document.createElement('div'); e.className = 'results-empty'; e.setAttribute('role', 'status');
+      const t = document.createElement('div'); t.textContent = 'No plugins match \u201C' + q + '\u201D';
+      const h = document.createElement('small'); h.textContent = 'Try a name, a category such as Files, or a word like convert.';
+      e.append(t, h); sBox.appendChild(e); sIn.removeAttribute('aria-activedescendant'); return;
+    }
+    sel = Math.min(sel, results.length - 1);
+    results.forEach((p, i) => {
+      const r = document.createElement('div'); r.className = 'result'; r.id = 'sr-' + p.id; r.setAttribute('role', 'option');
+      const ic = document.createElement('span'); ic.className = 'r-ico'; ic.innerHTML = ICONS.svg(p.id);
+      const tx = document.createElement('span'); tx.className = 'r-text';
+      const nm = document.createElement('span'); nm.className = 'r-name'; nm.textContent = p.name;
+      const ds = document.createElement('span'); ds.className = 'r-desc'; ds.textContent = p.desc;
+      tx.append(nm, ds);
+      const cat = document.createElement('span'); cat.className = 'r-cat'; cat.textContent = p.category;
+      r.append(ic, tx, cat);
+      r.addEventListener('mousemove', () => { if (sel !== i) { sel = i; paintSel(); } });
+      r.addEventListener('mousedown', (e) => e.preventDefault());         // keep focus in the search box
+      r.addEventListener('click', () => launch(p.id, false));
+      sBox.appendChild(r);
+    });
+    paintSel();
+  }
+  function clearSearch() { if (sIn.value) { sIn.value = ''; sel = 0; renderResults(); } }
+  sIn.addEventListener('input', () => { sel = 0; renderResults(); });
+  sIn.addEventListener('keydown', (e) => {
+    const n = results.length;
+    if (e.key === 'ArrowDown' && n) { e.preventDefault(); sel = (sel + 1) % n; paintSel(); }
+    else if (e.key === 'ArrowUp' && n) { e.preventDefault(); sel = (sel - 1 + n) % n; paintSel(); }
+    else if (e.key === 'Enter' && n) { e.preventDefault(); launch(results[sel].id, false); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (sIn.value) clearSearch(); else sIn.blur(); }
+  });
+
+  // Keyboard (needs the window to be focused, which it is while a plugin or a text box is in use):
+  // Esc steps back (blurs a focused field first), Alt+Left goes back, Alt+Home goes to the workspace home.
+  document.addEventListener('keydown', (e) => {
+    if (!Engine.isExpanded() || e.defaultPrevented) return;
+    const t = e.composedPath()[0], inField = t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '');
+    if (e.key === 'Escape') {
+      if (inField) { t.blur(); return; }
+      if (activeTab === 'plugin') back(); else Engine.closePanel();
+    } else if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); back(); }
+    else if (e.altKey && e.key === 'Home') { e.preventDefault(); goHome(); }
+  });
+
+  own(api.onOpenPlugin(({ id }) => openPlugin(id)));
 
   /* ---------- location (weather) ---------- */
   const loc = { name: $('#locName'), device: $('#locDevice'), clear: $('#locClear'), search: $('#locSearch'), results: $('#locResults'), msg: $('#locMsg') };
@@ -206,7 +347,6 @@
     { k: 'overlayMs', l: 'Feedback time (ms)', t: 'range', min: 800, max: 4000, step: 100 },
     { k: 'focusMin', l: 'Focus (min)', t: 'number', min: 1, max: 120 },
     { k: 'breakMin', l: 'Break (min)', t: 'number', min: 1, max: 60 },
-    { k: 'showHeader', l: 'Weather and clock bar', t: 'checkbox' },
     { k: 'showBattery', l: 'Show battery', t: 'checkbox' },
     { k: 'clipboardHistory', l: 'Clipboard history', t: 'checkbox' },
     { k: 'hideInFullscreen', l: 'Hide in full screen', t: 'checkbox' },
@@ -223,7 +363,7 @@
       if (f.t === 'select') { el = document.createElement('select'); f.o.forEach(([v, text]) => { const op = document.createElement('option'); op.value = v; op.textContent = text; el.appendChild(op); }); }
       else { el = document.createElement('input'); el.type = f.t; if (f.min !== undefined) { el.min = f.min; el.max = f.max; } if (f.step) el.step = f.step; }
       el.id = 'f_' + f.k;
-      const cur = S[f.k] ?? (f.k === 'showHeader' ? true : f.k === 'display' ? 'primary' : f.k === 'tempUnit' ? 'c' : undefined);
+      const cur = S[f.k] ?? (f.k === 'display' ? 'primary' : f.k === 'tempUnit' ? 'c' : undefined);
       if (f.t === 'checkbox') el.checked = !!cur; else if (cur !== undefined) el.value = cur;
       if (f.t === 'select' && !f.o.some(([v]) => v === el.value)) el.value = f.o[0][0];   // e.g. old "light" theme
       const paintRange = () => el.style.setProperty('--p', ((el.value - f.min) / (f.max - f.min)) * 100 + '%');
@@ -236,17 +376,21 @@
       wrap.append(label, el); form.appendChild(wrap);
       if (f.t === 'range') paintRange();
     });
-    const sc = document.createElement('button'); sc.className = 'link-btn'; sc.textContent = 'Plugin shortcuts'; sc.addEventListener('click', () => api.openHub('shortcuts')); form.appendChild(sc);
+    const sc = document.createElement('button'); sc.className = 'link-btn'; sc.textContent = 'Plugin shortcuts'; sc.addEventListener('click', () => openPlugin('shortcuts')); form.appendChild(sc);
     const q = document.createElement('button'); q.className = 'quit'; q.textContent = 'Quit EyeLand'; q.addEventListener('click', () => api.quit()); form.appendChild(q);
   }
 
   window.Workspace = {
-    showTab, focusLocation, paintSystem, paintBattery, setCoffee,
-    onOpen() { loadApps(); paintLocation(); },
-    applySettings() { paintClips(); paintTasks(); paintLocation(); paintBattery(); },
+    showTab, focusLocation, paintSystem, paintBattery, setCoffee, openPlugin, back, goHome,
+    onOpen() { renderApps(); renderQuick(); paintLocation(); },
+    applySettings() { if (reg()) reg().setState(S.plugins); paintClips(); paintTasks(); paintLocation(); paintBattery(); },
     async init() {
       try { displays = await api.displays(); } catch { displays = []; }
-      buildSettings(); setTimerMode('focus'); paintSystem(); paintBattery(); paintTasks(); paintClips(); paintLocation(); showTab('home'); loadApps();
+      let cat = []; try { cat = await api.catalog(); } catch {}
+      // The registry owns favourites / recents / enabled state and persists it through the settings store.
+      Island.registry = PluginRegistry.Registry.fromCatalog(cat, { state: S.plugins, onChange: (st) => { S.plugins = st; api.saveSettings({ plugins: st }); } });
+      reg().on((t) => { if (t === 'state' || t === 'keys') { renderQuick(); renderApps(); if (activeTab === 'plugin') paintPluginBar(); } });
+      buildSettings(); setTimerMode('focus'); paintSystem(); paintBattery(); paintTasks(); paintClips(); paintLocation(); showTab('home'); renderApps(); renderQuick();
     },
   };
 })();

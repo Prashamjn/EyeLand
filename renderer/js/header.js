@@ -1,10 +1,10 @@
-// Header strip: weather (left), time (centre), date and condition (right).
+// Expanded-island header: weather (left), time (centre), date and condition (right). It lives inside the island panel.
 // - Time and date use the Windows regional format (locale from the main process).
 // - The clock wakes once per minute, aligned to the minute boundary. No per-second timer.
 // - Weather arrives from the main process (cached, refreshed every 15 min); the DOM is only touched on change.
 (function () {
   const { $, setText, setHTML, later, cancel, own, icon } = Island;
-  const el = { bar: $('#bar'), btn: $('#barWeather'), ico: $('#wxIcon'), temp: $('#wxTemp'), city: $('#wxCity'), clock: $('#barClock'), date: $('#barDate'), cond: $('#barCond') };
+  const el = { bar: $('#head'), btn: $('#barWeather'), ico: $('#wxIcon'), temp: $('#wxTemp'), city: $('#wxCity'), clock: $('#barClock'), date: $('#barDate'), cond: $('#barCond') };
   let timeFmt, dateFmt, clockT = null, lastWeather = null;
 
   function buildFormats() {

@@ -90,7 +90,7 @@
   /* ---- plugin results (copied text, picked colour, ...) ---- */
   const TOAST_ICON = { copy: 'copy', check: 'check', warn: 'triangle-alert', search: 'search', coffee: 'coffee' };
   own(api.onToast(({ icon, text, color }) => {
-    if (window.Engine && Engine.isExpanded()) Engine.closePanel();
+    if (window.Engine && Engine.isExpanded() && !Engine.isPinned()) Engine.closePanel();   // results appear in the activity area when a plugin keeps the island open
     manager.post({ id: 'toast', type: 'notice', icon: TOAST_ICON[icon] || 'check', title: String(text || ''), priority: P.NOTICE, expiresIn: Math.max(2200, feedbackMs()), data: { color: icon === 'color' ? color : null, tone: icon === 'warn' ? 'warn' : null } });
   }));
 })();

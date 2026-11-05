@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis",
-    "test": "node tests/run.js"
+    "test": "node tests/run.js",
+    "test:ui": "electron tests/ui/smoke.js"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
