@@ -29,12 +29,18 @@ function Get-Art($p) {
 $last = ''; $artKey = ''; $artTries = 0
 while ($true) {
   $obj = @{ title = ''; artist = ''; app = ''; playing = $false }
-  $s = $mgr.GetCurrentSession()
+  $s = $null
+  foreach ($candidate in @($mgr.GetSessions())) {
+    $candidateInfo = $candidate.GetPlaybackInfo()
+    if ($candidateInfo -and ([string]$candidateInfo.PlaybackStatus) -eq 'Playing') { $s = $candidate; break }
+  }
+  if (-not $s) { $s = $mgr.GetCurrentSession() }
   if ($s) {
     $p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
     $obj.title = [string]$p.Title; $obj.artist = [string]$p.Artist
     $obj.app = ([string]$s.SourceAppUserModelId) -replace '\.exe$', ''
-    $obj.playing = ([string]$s.GetPlaybackInfo().PlaybackStatus -eq 'Playing')
+    $info = $s.GetPlaybackInfo()
+    if ($info -and ([string]$info.PlaybackStatus) -eq 'Playing') { $obj.playing = $true }
   }
   $json = $obj | ConvertTo-Json -Compress
   if ($json -ne $last) { $last = $json; [Console]::Out.WriteLine($json); [Console]::Out.Flush() }

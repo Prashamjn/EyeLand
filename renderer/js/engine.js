@@ -7,7 +7,7 @@
 (function () {
   const { $, S, manager, later, cancel, own } = Island;
   const root = $('#island'), ambientEl = $('#ambient');
-  const PANELS = { compact: [560, 392], large: [780, 600] }, IDLE = 124, IDLE_H = 32;
+  const PANELS = { compact: [560, 392], large: [780, 600] }, IDLE = 124, IDLE_H = 32, EQ_W = 25;   // EQ_W: the three-line indicator (15px) plus its gap
   const actSlot = new Views.Slot($('#actSlot'), 'pill');
   const topSlot = new Views.Slot($('#topSlot'), 'card');
   const topEmpty = $('#topEmpty');
@@ -39,7 +39,7 @@
 
   function idleWidth(chips) {
     if (!chips.length) return IDLE;
-    return Math.max(IDLE, 46 + chips.reduce((w, c) => w + c.w, 0) + 14 * chips.length);
+    return Math.max(IDLE, 46 + EQ_W + chips.reduce((w, c) => w + c.w, 0) + 14 * chips.length);
   }
 
   function render() {

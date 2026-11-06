@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('api', {
   onToast: (cb) => on('toast', cb),
   onCoffee: (cb) => on('coffee', cb),
   onWeather: (cb) => on('ey:weather', cb),
+  onPower: (cb) => on('ey:power', cb),                       // { onAc, connected }: connected is true only for a real battery -> AC transition
+  powerState: () => ipcRenderer.invoke('ey:power:get'),
   catalog: () => ipcRenderer.invoke('ey:catalog'),
   run: (id) => ipcRenderer.invoke('ey:run', id),
   openHub: (id) => ipcRenderer.invoke('ey:open-hub', id),

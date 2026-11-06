@@ -10,9 +10,9 @@ A Liquid Island for Windows: a floating black pill at the top of your screen tha
 
 ## The island
 - **Header** (inside the expanded island, never a separate bar): weather icon, temperature and city on the left, the time in the centre, the date and a short condition on the right. Time and date use your Windows regional format. It stays visible while a plugin is open. The collapsed island is only the black pill. (The old "Weather and clock bar" setting is gone; your saved value is kept but ignored.)
-- **Idle**: a small black pill. Quiet indicators appear inside it while something runs in the background: a waveform while music plays, a cup in Coffee mode, a countdown while the focus timer runs.
+- **Idle**: a small black pill with three thin lines. While music plays the lines move softly, each at its own pace; when it is paused or stops they ease back to rest (with reduced motion they hold still). A cup appears in Coffee mode and a countdown while the focus timer runs.
 - **Activities**: the pill springs open for a moment, then contracts.
-  - Charger connected or disconnected: battery icon, status and percentage (green while charging). A low-battery warning (15%) takes priority over everything else.
+  - Charger connected or disconnected: battery icon, status and percentage (green while charging). Connecting also plays a short, soft chime and a one-time ring around the icon (turn the chime off, or change its volume, under Charging sound in Settings). Nothing plays when you disconnect or when EyeLand starts with the charger already in. A low-battery warning (15%) takes priority over everything else.
   - Volume and brightness changes: icon, live bar and percentage.
   - Media started or track changed: artwork (when the player provides it), title, artist and a waveform. It settles to the small waveform after a few seconds.
   - Plugin results (copied text, picked colour...) and timer completion.
@@ -62,7 +62,7 @@ Open any of them from the Plugins tab, the search box or its shortcut. They open
 - PDF size reduction uses Ghostscript when installed. Without it, pages are re-rendered as pictures (smaller, but the text is no longer selectable).
 - Brightness works on laptop and built-in displays (WMI). External monitors are not supported.
 - Album artwork depends on the player publishing a thumbnail to Windows media controls. Without one, a music icon is shown.
-- Charger events use the browser Battery API inside Electron. Desktop PCs without a battery never show charger activity.
+- The charger notice uses the browser Battery API inside Electron; the chime and ring come from Windows power events (Electron `powerMonitor`). Desktop PCs without a battery never show charger activity or play the chime.
 - The island hides over full screen apps using the existing detection. Exclusive full screen games can hide any overlay, including this one.
 - Plugin pages keep their previous layout inside the island for now (restyled to match the island's surfaces). The old plugin window still exists as a fallback, used only when the island is hidden (for example over a full screen app) and from the tray's "Plugin window (legacy)" item.
 - Settings are migrated to schema 2 on first launch. The original file is copied to `settings.v1.backup.json` first and nothing is removed.
@@ -72,4 +72,4 @@ Open any of them from the Plugins tab, the search box or its shortcut. They open
 - On keyboards with AltGr, Ctrl+Alt shortcuts can type characters. Rebind them in the Shortcuts page.
 
 ## Folder map
-`main.js` main process and wiring. `src/` plugin back ends plus weather and location. `renderer/` the island (`renderer/js/`: core, views, engine, header, feeds, workspace). `hub/` plugin window and pages. `overlay/` screen capture, color picker and drawing. `native/` PowerShell helpers (volume, brightness, fullscreen, media, location). `shared/` activity manager, motion system, icons, plugin list. `tests/` unit tests (`npm test`).
+`main.js` main process and wiring. `src/` plugin back ends plus weather and location. `renderer/` the island (`renderer/js/`: core, views, engine, header, feeds, workspace). `hub/` plugin window and pages. `overlay/` screen capture, color picker and drawing. `native/` PowerShell helpers (volume, brightness, fullscreen, media, location). `shared/` activity manager, motion system, icons, plugin list, charger-event tracker, chime synthesis and three-line indicator state. `tests/` unit tests (`npm test`).

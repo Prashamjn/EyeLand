@@ -10,6 +10,7 @@ const { migrateSettings } = require(path.join(ROOT, 'shared', 'registry.js'));
 const settings = migrateSettings({
   theme: 'black', position: 'top', animSpeed: 1, hoverDelay: 120, overlayMs: 1800, focusMin: 25, breakMin: 5, showBattery: false,
   todos: [{ id: 'a1', text: 'Buy milk', done: false, created: 1 }, { id: 'a2', text: 'Call the bank', done: true, created: 2 }],
+  chargingSound: true, chargingSoundVolume: 60,            // the defaults main.js provides
   events: {}, shortcuts: Object.fromEntries(CATALOG.map((p) => [p.id, p.key])), tempUnit: 'c',
   weatherPlace: { name: 'Kota, Rajasthan', lat: 25.18, lon: 75.83 }, showHeader: true,   // legacy key must be harmless
 });
@@ -27,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
   onCursor: (cb) => on('cursor', cb), onSystem: (cb) => on('system', cb), onMedia: (cb) => on('media', cb), onClips: (cb) => on('clips', cb),
   onSettings: (cb) => on('settings', cb), onOpenPanel: (cb) => on('open-panel', cb), onToast: (cb) => on('toast', cb), onCoffee: (cb) => on('coffee', cb),
   onWeather: (cb) => on('ey:weather', cb), onOpenPlugin: (cb) => on('open-plugin', cb),
+  onPower: (cb) => on('ey:power', cb), powerState: async () => ({ onAc: true }),
   catalog: async () => CATALOG.map((p) => ({ ...p, key: settings.shortcuts[p.id] || '' })),
   run: async (id) => call('run', id), openHub: async () => {}, coffeeState: async () => false,
   env: async () => ({ locale: 'en-IN' }), displays: async () => [], weather: async () => weather, refreshWeather: async () => weather,

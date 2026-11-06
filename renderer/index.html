@@ -11,7 +11,7 @@
 
   <!-- The island: one shape that morphs between idle, activity and expanded -->
   <div id="island" data-mode="idle">
-    <div class="layer l-idle" aria-hidden="true"><span id="ambient" class="ambient"></span></div>
+    <div class="layer l-idle" aria-hidden="true"><span id="eq" class="eq" data-state="rest"><i></i><i></i><i></i></span><span id="ambient" class="ambient"></span></div>
 
     <div class="layer l-activity"><div id="actSlot" class="slot"></div></div>
 
@@ -130,6 +130,8 @@
 
 <script src="../shared/activity-manager.js"></script>
 <script src="../shared/motion.js"></script>
+<script src="../shared/eq-state.js"></script>
+<script src="../shared/chime.js"></script>
 <script src="../shared/lucide.js"></script>
 <script src="../shared/weather-codes.js"></script>
 <script src="../shared/icons.js"></script>
@@ -138,6 +140,7 @@
 <script src="js/views.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/header.js"></script>
+<script src="js/eq.js"></script>
 <script src="js/plugin-host.js"></script>
 <script src="js/feeds.js"></script>
 <script src="js/workspace.js"></script>

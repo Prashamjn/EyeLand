@@ -348,6 +348,8 @@
     { k: 'focusMin', l: 'Focus (min)', t: 'number', min: 1, max: 120 },
     { k: 'breakMin', l: 'Break (min)', t: 'number', min: 1, max: 60 },
     { k: 'showBattery', l: 'Show battery', t: 'checkbox' },
+    { k: 'chargingSound', l: 'Charging sound', t: 'checkbox' },
+    { k: 'chargingSoundVolume', l: 'Sound volume', t: 'range', min: 0, max: 100, step: 5 },
     { k: 'clipboardHistory', l: 'Clipboard history', t: 'checkbox' },
     { k: 'hideInFullscreen', l: 'Hide in full screen', t: 'checkbox' },
     { k: 'autostart', l: 'Start with Windows', t: 'checkbox' },
@@ -373,6 +375,7 @@
         if (f.t === 'range') paintRange();
         if ((f.k === 'focusMin' || f.k === 'breakMin') && !timer.running && timer.remaining === timer.total) setTimerMode(timer.mode);
       });
+      if (f.k === 'chargingSoundVolume') el.addEventListener('change', () => Island.previewChime && Island.previewChime());   // a short preview when the slider is released
       wrap.append(label, el); form.appendChild(wrap);
       if (f.t === 'range') paintRange();
     });

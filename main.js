@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, clipboard, Tray, Menu, nativeImage, globalShortcut, powerSaveBlocker, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, clipboard, Tray, Menu, nativeImage, globalShortcut, powerSaveBlocker, powerMonitor, dialog, shell, session } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -6,6 +6,7 @@ const { spawn, execFile } = require('child_process');
 
 const CATALOG = require('./shared/catalog.js');
 const { migrateSettings, needsMigration } = require('./shared/registry.js');
+const { createPowerTracker, sanitizeSoundSettings, SOUND_DEFAULTS } = require('./shared/power-events.js');
 const media = require('./src/media');
 const pdf = require('./src/pdf');
 const net = require('./src/net');
@@ -19,7 +20,8 @@ const voice = require('./src/voice');
 const { createShare } = require('./src/share');
 const { uniquePath } = require('./src/util');
 
-if (!app.requestSingleInstanceLock()) app.quit();
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
 
 // Transparent, click-through host window. The island (header included) is drawn inside it.
 // 'compact' fits the normal expanded island; 'large' leaves room for the bigger plugin workspace.
@@ -36,6 +38,7 @@ const defaults = {
   hideInFullscreen: true, shortcuts: defaultShortcuts, coffeeMinutes: 0,
   todos: [], events: {}, colorFormat: 'hex', colorHistory: [], ocrLang: 'eng', translateTo: 'en',
   lensEngine: 'google', lensConsent: false, weatherPlace: null, tempUnit: 'c',
+  ...SOUND_DEFAULTS,                      // chargingSound: true, chargingSoundVolume: 60 (Phase 3)
 };
 let settings = migrateSettings({ ...defaults }), win, hub, tray, clips = [], lastClip = '';
 let hubReady = false, pendingHub = null;
@@ -95,7 +98,9 @@ function createWindow() {
     width: SIZES.compact.w, height: SIZES.compact.h, frame: false, transparent: true, resizable: false, movable: false,
     skipTaskbar: true, alwaysOnTop: true, focusable: false, hasShadow: false, show: false,
     backgroundColor: '#00000000',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    // autoplayPolicy: the island is click-through and never receives a user gesture, so without this Chromium would keep the
+    // charger chime's AudioContext suspended. It only lifts the gesture requirement for audio; the security settings are unchanged.
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required' },
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true);
@@ -346,11 +351,33 @@ ipcMain.handle('ey:location:device', async () => {
 });
 ipcMain.handle('ey:location:open-privacy', () => shell.openExternal('ms-settings:privacy-location'));
 
+/* ---------- charger detection (native power events, no polling) ---------- */
+// Electron's powerMonitor reports 'on-ac' / 'on-battery' on Windows. The tracker (shared/power-events.js) turns them into
+// a connect event only for a real battery -> AC transition; launching with the charger already plugged in announces nothing.
+let power = null;
+const readOnBattery = () => { try { return !!powerMonitor.isOnBatteryPower(); } catch { return false; } };
+function startPowerWatch() {
+  power = createPowerTracker({
+    onBattery: readOnBattery(),
+    onConnected: () => send('ey:power', { onAc: true, connected: true }),
+    onDisconnected: () => send('ey:power', { onAc: false, connected: false }),
+  });
+  const guard = (fn) => () => { try { fn(); } catch (e) { console.error('[power]', e); } };
+  powerMonitor.on('on-ac', guard(() => power.ac()));
+  powerMonitor.on('on-battery', guard(() => power.battery()));
+  // After sleep Windows may replay power events: stay quiet for a few seconds and re-read the real state.
+  powerMonitor.on('resume', guard(() => {
+    power.quiet(4000);
+    if (power.sync(readOnBattery())) send('ey:power', { onAc: power.onAc, connected: false });
+  }));
+}
+ipcMain.handle('ey:power:get', () => ({ onAc: power ? power.onAc : !readOnBattery() }));
+
 /* ---------- generic IPC ---------- */
 ipcMain.handle('settings-get', () => settings);
 ipcMain.on('settings-save', (e, s) => {
   const old = settings;
-  saveSettings(s, e.sender);
+  saveSettings(sanitizeSoundSettings(s), e.sender);
   place();
   app.setLoginItemSettings({ openAtLogin: !!settings.autostart });
   if (!settings.clipboardHistory) { clips = []; send('clips', clips); }
@@ -488,17 +515,19 @@ function createTray() {
   tray.on('click', () => send('open-panel', {}));
 }
 
-app.whenReady().then(() => {
-  loadSettings();
-  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'media'));
-  session.defaultSession.setPermissionCheckHandler((_wc, perm) => perm === 'media');
-  app.setLoginItemSettings({ openAtLogin: !!settings.autostart });
-  createWindow(); createTray(); startWatchers();
-  pushWeather(false).then(scheduleWeather);
-  const errs = registerAll();
-  if (Object.keys(errs).length) console.warn('[shortcuts] could not register:', errs);
-});
-app.on('second-instance', () => send('open-panel', {}));
+if (hasInstanceLock) {
+  app.whenReady().then(() => {
+    loadSettings();
+    session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'media'));
+    session.defaultSession.setPermissionCheckHandler((_wc, perm) => perm === 'media');
+    app.setLoginItemSettings({ openAtLogin: !!settings.autostart });
+    createWindow(); createTray(); startWatchers(); startPowerWatch();
+    pushWeather(false).then(scheduleWeather);
+    const errs = registerAll();
+    if (Object.keys(errs).length) console.warn('[shortcuts] could not register:', errs);
+  });
+  app.on('second-instance', () => send('open-panel', {}));
+}
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('before-quit', () => { app.isQuitting = true; clearInterval(cursorTimer); clearTimeout(weatherTimer); share.stop(); procs.forEach((p) => { try { p.kill(); } catch {} }); });
 app.on('window-all-closed', () => app.quit());

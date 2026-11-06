@@ -16,6 +16,10 @@ app.whenReady().then(async () => {
   const errors = [];
   win.webContents.on('console-message', (_e, level, msg) => { if (level >= 2) errors.push(msg); });
   await win.loadFile(path.join(ROOT, 'renderer', 'index.html'));
+  win.webContents.debugger.attach('1.3');
+  await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  await sleep(100);
   const js = async (code) => { try { return await win.webContents.executeJavaScript(code); } catch (e) { console.log('SCRIPT ERROR in: ' + code.slice(0, 90) + '\n  ' + e.message + '\n  console: ' + errors.slice(-3).join(' | ')); throw e; } };
   const shot = async (name) => { const img = await win.webContents.capturePage(); fs.writeFileSync(path.join(OUT, name + '.png'), img.toPNG()); };
   await sleep(600);
@@ -109,6 +113,15 @@ app.whenReady().then(async () => {
   check('unknown plugin id is rejected without breaking the island', await js(`!PluginHost.isOpen()`));
   await js(`Engine.closePanel()`); await sleep(900); await shot('09-collapsed-again');
   check('collapses back to the pill', await js(`document.getElementById('island').dataset.mode !== 'panel'`));
+  /* Phase 3: three-line music indicator, charger chime and pulse, charging-sound settings (tests/ui/phase3-checks.js) */
+  await require('./phase3-checks').run({ js, sleep, check });
+  try {                                                  // reduced motion: switch the media feature on through the DevTools protocol
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await sleep(250);
+    await require('./phase3-checks').reduced({ js, sleep, check });
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  } catch (e) { console.log('SKIPPED reduced-motion checks: ' + e.message); }
+
   const bad = errors.filter((m) => !/Autofill|DevTools|Electron Security Warning/i.test(m));
   check('no console errors / CSP violations', bad.length === 0, bad.slice(0, 4).join(' | '));
 

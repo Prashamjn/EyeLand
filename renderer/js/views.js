@@ -46,10 +46,15 @@
       text.append(t, s); if (card) { track.style.marginTop = '8px'; text.append(track); }
       root.append(ico, text, pct);
       const st = {};
+      ico.addEventListener('animationend', (e) => { if (e.animationName === 'chg-ring') ico.classList.remove('pulse'); });
       return { el: root, update(a) {
         const d = a.data || {}, lvl = clamp(d.level), on = !!d.charging;
         setIcon(ico, st, on ? 'battery-charging' : 'battery');
-        ico.className = 'v-ico ' + (on ? 'tint-green' : lvl <= 15 ? 'tint-amber' : '');
+        ico.className = 'v-ico ' + (on ? 'tint-green' : lvl <= 15 ? 'tint-amber' : '') + (ico.classList.contains('pulse') ? ' pulse' : '');
+        if (on && d.pulse && d.pulse !== st.pulse) {                       // one-shot ring when the charger was just connected
+          st.pulse = d.pulse;
+          if (!Island.reduced) { ico.classList.remove('pulse'); void ico.offsetWidth; ico.classList.add('pulse'); }
+        }
         setText(t, on ? 'Charging' : 'Charger disconnected');
         setText(s, on ? (lvl >= 100 ? 'Fully charged' : 'Plugged in') : 'On battery');
         setText(pct, lvl + '%'); fill.style.transform = `scaleX(${lvl / 100})`;
@@ -83,7 +88,6 @@
         if (playBtn && playing !== !!d.playing) { playing = !!d.playing; playBtn.innerHTML = icon(playing ? 'pause' : 'play', 18).replace('<svg', '<svg class="fill"'); playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play'); }
       } };
     },
-    chip: (a) => (a.data && a.data.playing ? { key: 'wave', w: 16, html: wave(true) } : null),
   };
 
   /* ---- generic: notifications, timers, long-running tasks, system activity ---- */

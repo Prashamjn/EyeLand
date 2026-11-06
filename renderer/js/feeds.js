@@ -55,6 +55,25 @@
     }).catch(() => {});
   }
 
+  /* ---- charger connect: soft chime + one-shot pulse ----
+     The main process watches Windows power events and sends { onAc, connected } only for a real battery -> AC transition
+     (never at launch, never for duplicates or disconnects). The chime is synthesised locally (shared/chime.js). */
+  const chime = (Island.chime = Chime.createPlayer({ getCtor: () => window.AudioContext || window.webkitAudioContext }));
+  const power = (Island.power = { onAc: true });
+  api.powerState().then((p) => { if (p) power.onAc = !!p.onAc; }).catch(() => {});
+  const soundOn = () => S.chargingSound !== false;
+  const soundVol = () => (S.chargingSoundVolume == null ? 60 : S.chargingSoundVolume);
+  Island.previewChime = () => { if (soundOn()) chime.play(soundVol()); };          // used by the settings slider
+  own(api.onPower((p) => {
+    if (!p) return;
+    power.onAc = !!p.onAc;
+    if (!p.connected) return;                                  // a disconnect only updates the state
+    if (soundOn()) chime.play(soundVol());                     // read at event time, so a settings change applies immediately
+    const b = Island.battery;
+    if (b) manager.post({ id: 'charging', type: 'charging', title: 'Charging', priority: P.FEEDBACK, expiresIn: 3200, progress: b.level, data: { charging: true, level: Math.round(b.level * 100), pulse: Date.now() } });
+    if (window.Workspace) Workspace.paintBattery();
+  }));
+
   /* ---- media ---- */
   const cur = { key: '', art: null, playing: false, seen: false };
   const artUri = (b64) => (b64 ? `data:image/${b64.startsWith('iVBOR') ? 'png' : 'jpeg'};base64,${b64}` : null);
@@ -66,11 +85,12 @@
       }
       return;
     }
-    if (!m.title) { cur.key = ''; cur.art = null; cur.playing = false; manager.complete('media'); return; }
+    if (!m.title) { cur.key = ''; cur.art = null; cur.playing = false; manager.complete('media'); Eq.media(null); return; }
     const key = `${m.title}|${m.artist || ''}|${m.app || ''}`, changed = key !== cur.key;
     if (changed) cur.art = null;
     const started = !!m.playing && (!cur.playing || changed);
     cur.key = key; cur.playing = !!m.playing;
+    Eq.media(!!m.playing);                          // the three lines follow the one session Windows reports as current
     const base = { id: 'media', type: 'media', title: m.title, subtitle: m.artist || m.app || '', priority: P.MEDIA, data: { playing: !!m.playing, app: m.app || '', art: cur.art } };
     if (!cur.seen) { cur.seen = true; manager.post({ ...base, display: 'ambient' }); }                 // already playing at startup: stay quiet
     else if (started) manager.post({ ...base, focusMs: 5500 });                                        // media started: peek, then settle
